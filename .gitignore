@@ -1,2 +1,4 @@
 API_KEY.txt
 logfiles
+*.egg-info
+*.pyc
