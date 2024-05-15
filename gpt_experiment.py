@@ -23,7 +23,7 @@ class GPTExperiment:
             filename = f'logfiles/experiment-{timestamp}.json'
         self.filename = filename
         self.save_period = 1 # save every N calls to the prompt function
-        self.timeout = 1
+        self.timeout = 10
         self.temperature = 0
         self.verbose = True
         self.remove_images = True
@@ -60,6 +60,7 @@ class GPTExperiment:
             usage_data['completion_tokens'] / model_price['n'] * model_price['completion']
         
         self.total_cost += cost
+        self.data['metadata']['total_cost'] = self.total_cost
         if self.verbose:
             print(f'Cost of this prompt = ${cost:.2f}')
             print(f'Total cost = ${self.total_cost:.2f}')
@@ -92,6 +93,8 @@ class GPTExperiment:
         self.prompt_counter += 1
         if (self.save_period > 0) and (self.prompt_counter % self.save_period == 0):
             self.save_data()
+
+        return datapoint
 
     # Prompts the OpenAI model of your choice
     def prompt_gpt(self, conversation):
