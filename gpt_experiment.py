@@ -2,6 +2,11 @@ import openai
 import json
 import datetime
 import os
+import time
+import copy
+from PIL import Image, ImageDraw
+import base64
+from io import BytesIO
 
 class GPTExperiment:
 
@@ -18,9 +23,10 @@ class GPTExperiment:
             filename = f'logfiles/experiment-{timestamp}.json'
         self.filename = filename
         self.save_period = 1 # save every N calls to the prompt function
-        self.timeout = 5
+        self.timeout = 1
         self.temperature = 0
         self.verbose = True
+        self.remove_images = True
 
         # Set API key
         self.set_api_key(key)
@@ -61,15 +67,14 @@ class GPTExperiment:
         return cost
 
     # Prompt GPT and obtain a response
-    # conversation is a list of dictionaries of the following form:
-    # [{'role' : 'user', 'content' : 'user prompt input etc.'},
-    #  {'role' : 'assistant', 'content' : 'this was GPTs response',
-    #  {'role' : 'user', 'content' : 'now do this extra thing GPT...'}]
+    # Refer to text_conversation and vision_conversation at the bottom 
+    # for examples of the structure of the variable `conversation`
     def prompt(self, conversation):
         if self.model == 'human':
             (response, usage_data) = self.prompt_human(conversation)
         else:
-            (response, usage_data) = self.prompt_gpt(conversation)
+            conversation_w_images_encoded = encode_images_enmasse(conversation)
+            (response, usage_data) = self.prompt_gpt(conversation_w_images_encoded)
 
         if usage_data is not None:
             cost = self.update_cost(usage_data)
@@ -97,16 +102,23 @@ class GPTExperiment:
                 messages=conversation,
                 temperature=self.temperature
             )
-        except (openai.error.RateLimitError, openai.error.ServiceUnavailableError) as e:
+        except (openai.RateLimitError) as e:
             print(e)
             print('Sleeping for 60s due to OpenAI rate limiting')
             time.sleep(60)
-            return (None, None)
-        except openai.error.InvalidRequestError as e:
-            print('Prompt is too long. Skipping this prompt')
-            return (None, None)
-        usage_data = gpt_response['usage']
-        response = gpt_response['choices'][0]['message']['content']
+            print('Trying same prompt again')
+            return self.prompt_gpt(conversation)
+        except (openai.APITimeoutError) as e:
+            print(e)
+            print(f'Doubling timeout from {self.timeout} to {self.timeout*2} seconds')
+            self.timeout = self.timeout * 2
+            print('Trying same prompt again')
+            return self.prompt_gpt(conversation)
+        usage_data = {
+            'prompt_tokens' : gpt_response.usage.prompt_tokens, 
+            'completion_tokens' : gpt_response.usage.completion_tokens
+        }
+        response = gpt_response.choices[0].message.content
 
         return (response, usage_data)
 
@@ -122,20 +134,47 @@ class GPTExperiment:
 
         return (response, usage_data)
 
+# Encode the image so that it can be fed to visual models
+def encode_image(image_path):
+    if image_path is None or (not os.path.exists(image_path)):
+        raise Exception(f'Filepath {image_path} does not exist')
+
+    with Image.open(image_path) as img:
+        img_buffer = BytesIO()
+        img.save(img_buffer, format='PNG')
+        img_buffer.seek(0)
+        data = img_buffer.read()
+        encoded_data = base64.b64encode(data).decode('utf-8')
+
+        return 'data:image/png;base64,' + encoded_data
+
+# Encodes all images in a conversation and returns a new conversation object
+def encode_images_enmasse(conversation):
+    conversation_copy = copy.deepcopy(conversation)
+    for turn in conversation_copy:
+        for content in turn['content']:
+            if content['type'] == 'image_url':
+                content['image_url']['url'] = encode_image(content['image_url']['url'])
+    return conversation_copy
+
+# Keeps track of model price and saves it to each experimental output
 MM = 1_000_000
 model_pricing = {
     'human' : {'n' : MM, 'prompt': 0, 'completion': 0}, # cost calculated per n tokens
-    'gpt-4-0125-preview' : {'n' : MM, 'prompt': 10, 'completion': 30}
+    'gpt-4-0125-preview' : {'n' : MM, 'prompt': 10, 'completion': 30},
+    'gpt-4o-2024-05-13' : {'n' : MM, 'prompt' : 5, 'completion' : 15}
 }
+
+# List of all image models
+image_models = ['gpt-4o-2024-05-13']
 
 if __name__ == '__main__':
     # Parse input arguments
+    import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='human') # by default, prompts you, the human
-    parser.add_argument('--num', type=int, default=1) # number of task descriptions
-    parser.add_argument('--m2wpath', type=str, default=MIND2WEB_PATH) # path to Mind2Web trainining folder
     parser.add_argument('--keypath', type=str, default='./API_KEY.txt') # path to text file containing your API key
-    parser.add_argument('--examples', type=int, default=5)
+    parser.add_argument('--exampleparam', type=int, default=5)
     args = vars(parser.parse_args())
     
     # Get the key
@@ -144,7 +183,24 @@ if __name__ == '__main__':
     # Initialize an experiment
     exp = GPTExperiment(**args)
 
-    # Set up this code to run your experiment
-    # for i in range(...):
-    #   exp.prompt(conversation)
-    # ...
+    # Set up an example conversation
+    text_conversation = [
+        {'role' : 'user', 'content' : 'user prompt input etc.'},
+        {'role' : 'assistant', 'content' : 'this was GPTs response'},
+        {'role' : 'user', 'content' : 'now do this extra thing GPT...'}
+    ]
+    vision_conversation = [
+        {'role' : 'user', 'content' : [{'type' : 'text', 'text' : 'Im going to give you an image and I want you to tell me what it is an image of'}]},
+        {'role' : 'assistant', 'content' : [{'type' : 'text', 'text' : 'Ok'}]},
+        {'role' : 'user', 'content' : [{'type' : 'image_url', 'image_url' : {'url' : './sample-image.png'}}]}
+    ]
+
+    # Prompt the model with either text_conversation or vision_conversation
+    if args['model'] in image_models:
+        conversation = vision_conversation
+    else:
+        conversation = text_conversation
+
+    # Prompt the model
+    exp.prompt(conversation)
+    
