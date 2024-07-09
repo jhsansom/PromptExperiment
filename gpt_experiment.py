@@ -117,6 +117,10 @@ class GPTExperiment:
             self.timeout = self.timeout * 2
             print('Trying same prompt again')
             return self.prompt_gpt(conversation)
+        except (openai.BadRequestError) as e:
+            print('==== ERROR DURING PROMPTING ====')
+            print(e)
+            return (f'Error {e}', {'prompt_tokens' : 0, 'completion_tokens': 0})
         usage_data = {
             'prompt_tokens' : gpt_response.usage.prompt_tokens, 
             'completion_tokens' : gpt_response.usage.completion_tokens
