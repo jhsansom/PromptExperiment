@@ -10,7 +10,7 @@ from io import BytesIO
 
 class GPTExperiment:
 
-    def __init__(self, model='human', key=None, filename=None, **args):
+    def __init__(self, model='human', key=None, filename=None, temperature=0, **args):
         # Tracking variables
         self.total_cost = 0.0
         self.create_data_struct(model, key, **args)
@@ -24,7 +24,7 @@ class GPTExperiment:
         self.filename = filename
         self.save_period = 1 # save every N calls to the prompt function
         self.timeout = 10
-        self.temperature = 0
+        self.temperature = temperature
         self.verbose = True
         self.remove_images = True
 
@@ -182,6 +182,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='human') # by default, prompts you, the human
     parser.add_argument('--keypath', type=str, default='./API_KEY.txt') # path to text file containing your API key
     parser.add_argument('--exampleparam', type=int, default=5)
+    parser.add_argument('--temperature', type=float, default=0)
     args = vars(parser.parse_args())
     
     # Get the key
